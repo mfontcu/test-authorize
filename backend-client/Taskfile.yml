@@ -1,0 +1,53 @@
+version: '3'
+
+vars:
+  NAME: "backend-client"
+  PORT: 3092
+  NETWORK_NAME: "backend-network"
+  ADMIN_HOST: "http://backend-admin:3090"
+  CLERK_HOST: "http://backend-clerk:3091"
+
+tasks:
+
+  api:start:
+    desc: Start API.
+    deps:
+      - task: build:image
+      - task: network:check
+      - task: remove:container
+    cmds:
+      - docker run -e ADMIN_HOST={{.ADMIN_HOST}} -e CLERK_HOST={{.CLERK_HOST}} -p {{.PORT}}:{{.PORT}} --network {{.NETWORK_NAME}} --name {{.NAME}} {{.NAME}}
+      
+  network:check:
+    desc: Check if the Docker network exists, create it if not.
+    cmds:
+      - |
+        if [ -z "$(docker network ls --filter name=^{{.NETWORK_NAME}}$ --format '{{`{{.Name}}`}}')" ]; then
+          echo "Network {{.NETWORK_NAME}} does not exist. Creating it..."
+          docker network create {{.NETWORK_NAME}}
+        else
+          echo "Network {{.NETWORK_NAME}} already exists."
+        fi
+  
+  build:image:
+    desc: Build image.
+    cmds:
+      - docker build --no-cache -t {{.NAME}}:latest .
+
+  remove:container:
+    desc: Remove container.
+    cmds:
+      - docker rm -f {{.NAME}} || true
+
+  build:arch:
+    desc: Build image for a specific architecture.
+    cmds:
+      - docker buildx build --platform=linux/amd64 --no-cache --debug -t {{.NAME}}:latest .
+
+  push:image:
+    desc: Push image to registry.
+    deps:
+      - task: build:arch
+    cmds:
+      - docker tag {{.NAME}}:latest core.harbor.k8s.com/test-keycloak/{{.NAME}}:latest
+      - docker push core.harbor.k8s.com/test-keycloak/{{.NAME}}:latest
