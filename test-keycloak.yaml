@@ -1,0 +1,405 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: backend-admin
+  namespace: test-keycloak
+spec:
+  type: ClusterIP
+  ports:
+    - port: 80
+      targetPort: 3090
+      protocol: TCP
+      name: http
+  selector:
+    app: backend-admin
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: backend-clerk
+  namespace: test-keycloak
+spec:
+  type: ClusterIP
+  ports:
+    - port: 80
+      targetPort: 3091
+      protocol: TCP
+      name: http
+  selector:
+    app: backend-clerk
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: backend-client
+  namespace: test-keycloak
+spec:
+  type: ClusterIP
+  ports:
+    - port: 80
+      targetPort: 3092
+      protocol: TCP
+      name: http
+  selector:
+    app: backend-client
+# ---
+# apiVersion: traefik.containo.us/v1alpha1
+# kind: Middleware
+# metadata:
+#   name: auth-keycloak
+#   namespace: test-keycloak
+# spec:
+#   forwardAuth:
+#     address: "http://keycloak.k8s.com/realms/iskaypet/protocol/openid-connect/userinfo"
+#     trustForwardHeader: true
+#     authRequestHeaders:
+#       - Authorization
+#     authResponseHeaders:
+#       - Authorization
+#       - X-Userinfo
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: test-ingress
+  namespace: test-keycloak
+  annotations:
+    external-dns.alpha.kubernetes.io/hostname: test-keycloak.k8s.com
+    # traefik.ingress.kubernetes.io/router.middlewares: test-keycloak-auth-keycloak@kubernetescrd
+    nginx.ingress.kubernetes.io/auth-url: "http://keycloak.k8s.com/realms/iskaypet/protocol/openid-connect/userinfo"
+    nginx.ingress.kubernetes.io/auth-signin: "http://keycloak.k8s.com/realms/iskaypet/protocol/openid-connect/auth?redirect=$request_uri"
+    # nginx.ingress.kubernetes.io/auth-response-headers: "Authorization"
+spec:
+  ingressClassName: nginx
+  # ingressClassName: traefik
+  rules:
+    - host: test-keycloak.k8s.com
+      http:
+        paths:
+          - path: /admin
+            pathType: Prefix
+            backend:
+              service:
+                name: backend-admin
+                port:
+                  number: 80
+          - path: /admin-claim
+            pathType: Prefix
+            backend:
+              service:
+                name: backend-admin
+                port:
+                  number: 80
+          - path: /admin-to-clerk
+            pathType: Prefix
+            backend:
+              service:
+                name: backend-admin
+                port:
+                  number: 80
+          - path: /admin-to-client
+            pathType: Prefix
+            backend:
+              service:
+                name: backend-admin
+                port:
+                  number: 80
+          - path: /clerk
+            pathType: Prefix
+            backend:
+              service:
+                name: backend-clerk
+                port:
+                  number: 80
+          - path: /clerk-claim
+            pathType: Prefix
+            backend:
+              service:
+                name: backend-clerk
+                port:
+                  number: 80
+          - path: /clerk-to-admin
+            pathType: Prefix
+            backend:
+              service:
+                name: backend-clerk
+                port:
+                  number: 80
+          - path: /clerk-to-client
+            pathType: Prefix
+            backend:
+              service:
+                name: backend-clerk
+                port:
+                  number: 80
+          - path: /client
+            pathType: Prefix
+            backend:
+              service:
+                name: backend-client
+                port:
+                  number: 80
+          - path: /client-claim
+            pathType: Prefix
+            backend:
+              service:
+                name: backend-client
+                port:
+                  number: 80
+          - path: /client-to-admin
+            pathType: Prefix
+            backend:
+              service:
+                name: backend-client
+                port:
+                  number: 80
+          - path: /client-to-clerk
+            pathType: Prefix
+            backend:
+              service:
+                name: backend-client
+                port:
+                  number: 80
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backend-admin
+  namespace: test-keycloak
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: backend-admin
+  template:
+    metadata:
+      labels:
+        app: backend-admin
+    spec:
+      imagePullSecrets:
+      - name: harbor-registry-secret
+      containers:
+      - name: backend
+        image: core.harbor.k8s.com/test-keycloak/backend-admin
+        ports:
+        - containerPort: 3090
+        env:
+        - name: CLERK_HOST
+          value: "http://backend-clerk.test-keycloak.svc.cluster.local"
+        - name: CLIENT_HOST
+          value: "http://backend-client.test-keycloak.svc.cluster.local"
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: 3090
+          initialDelaySeconds: 5
+          periodSeconds: 10
+          failureThreshold: 3
+        livenessProbe:
+          httpGet:
+            path: /live
+            port: 3090
+          initialDelaySeconds: 10
+          periodSeconds: 10
+          failureThreshold: 3
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backend-clerk
+  namespace: test-keycloak
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: backend-clerk
+  template:
+    metadata:
+      labels:
+        app: backend-clerk
+    spec:
+      imagePullSecrets:
+      - name: harbor-registry-secret
+      containers:
+      - name: backend
+        image: core.harbor.k8s.com/test-keycloak/backend-clerk
+        ports:
+        - containerPort: 3091
+        env:
+        - name: ADMIN_HOST
+          value: "http://backend-admin.test-keycloak.svc.cluster.local"
+        - name: CLIENT_HOST
+          value: "http://backend-client.test-keycloak.svc.cluster.local"
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: 3091
+          initialDelaySeconds: 5
+          periodSeconds: 10
+          failureThreshold: 3
+        livenessProbe:
+          httpGet:
+            path: /live
+            port: 3091
+          initialDelaySeconds: 10
+          periodSeconds: 10
+          failureThreshold: 3
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backend-client
+  namespace: test-keycloak
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: backend-client
+  template:
+    metadata:
+      labels:
+        app: backend-client
+    spec:
+      imagePullSecrets:
+      - name: harbor-registry-secret
+      containers:
+      - name: backend
+        image: core.harbor.k8s.com/test-keycloak/backend-client
+        ports:
+        - containerPort: 3092
+        env:
+        - name: ADMIN_HOST
+          value: "http://backend-admin.test-keycloak.svc.cluster.local"
+        - name: CLERK_HOST
+          value: "http://backend-clerk.test-keycloak.svc.cluster.local"
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: 3092
+          initialDelaySeconds: 5
+          periodSeconds: 10
+          failureThreshold: 3
+        livenessProbe:
+          httpGet:
+            path: /live
+            port: 3092
+          initialDelaySeconds: 10
+          periodSeconds: 10
+          failureThreshold: 3
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: backend-internal
+  namespace: test-keycloak
+spec:
+  type: ClusterIP
+  ports:
+    - port: 80
+      targetPort: 3092
+      protocol: TCP
+      name: http
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backend-internal
+  namespace: test-keycloak
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: backend-internal
+  template:
+    metadata:
+      labels:
+        app: backend-internal
+    spec:
+      imagePullSecrets:
+      - name: harbor-registry-secret
+      containers:
+      - name: backend
+        image: core.harbor.k8s.com/test-keycloak/backend-client
+        ports:
+        - containerPort: 3092
+        env:
+        - name: ADMIN_HOST
+          value: "http://backend-admin.test-keycloak.svc.cluster.local"
+        - name: CLERK_HOST
+          value: "http://backend-clerk.test-keycloak.svc.cluster.local"
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: 3092
+          initialDelaySeconds: 5
+          periodSeconds: 10
+          failureThreshold: 3
+        livenessProbe:
+          httpGet:
+            path: /live
+            port: 3092
+          initialDelaySeconds: 10
+          periodSeconds: 10
+          failureThreshold: 3
+# ---
+# # Permitirles la comunicación entre ellos a través del DNS interno
+# apiVersion: networking.k8s.io/v1
+# kind: NetworkPolicy
+# metadata:
+#   name: allow-internal-communication
+#   namespace: test-keycloak
+# spec:
+#   podSelector:
+#     matchLabels: {}  # Aplica a todos los pods del namespace
+#   policyTypes:
+#     - Ingress
+#     - Egress
+#   ingress:
+#     - from:
+#         - podSelector:
+#             matchLabels:
+#               app: backend-admin
+#         - podSelector:
+#             matchLabels:
+#               app: backend-clerk
+#         - podSelector:
+#             matchLabels:
+#               app: backend-client
+#       ports:
+#         - protocol: TCP
+#           port: 80
+#   egress:
+#     - to:
+#         - podSelector:
+#             matchLabels:
+#               app: backend-admin
+#         - podSelector:
+#             matchLabels:
+#               app: backend-clerk
+#         - podSelector:
+#             matchLabels:
+#               app: backend-client
+#       ports:
+#         - protocol: TCP
+#           port: 80
+# ---
+# # Permitir solo comunicación hacia el ingress
+# apiVersion: networking.k8s.io/v1
+# kind: NetworkPolicy
+# metadata:
+#   name: restrict-backend-internal
+#   namespace: test-keycloak
+# spec:
+#   podSelector:
+#     matchLabels:
+#       app: backend-internal
+#   policyTypes:
+#     - Egress
+#   egress:
+#     - to:
+#         - podSelector:
+#             matchLabels:
+#               app.kubernetes.io/name: ingress-nginx  # Etiqueta del ingress controller
+#       ports:
+#         - protocol: TCP
+#           port: 80
