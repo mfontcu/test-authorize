@@ -1,0 +1,35 @@
+syntax = "proto3";
+
+package clerk;
+
+option go_package = "./proto;clerk";
+
+service ClerkService {
+    rpc GetClerks (EmptyRequest) returns (stream Clerk);
+    rpc GetClaims (EmptyRequest) returns (ClaimResponse);
+    rpc GetClientsFromClerk(EmptyRequest) returns (stream ClientResponse);
+    rpc GetAdminsFromClerk(EmptyRequest) returns (stream AdminResponse);
+}
+
+message EmptyRequest {}
+
+message Clerk {
+    int32 ID = 1;
+    string Name = 2;
+}
+
+message ClaimResponse {
+    string message = 1;
+    repeated string roles = 2;
+    repeated string storeIDs = 3;
+}
+
+message ClientResponse {
+    int32 ID = 1;
+    string Name = 2;
+}
+
+message AdminResponse {
+    int32 ID = 1;
+    string Name = 2;
+}

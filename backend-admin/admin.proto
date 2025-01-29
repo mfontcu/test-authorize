@@ -1,0 +1,35 @@
+syntax = "proto3";
+
+package admin;
+
+option go_package = "./proto;admin";
+
+service AdminService {
+    rpc GetAdmins (EmptyRequest) returns (stream Admin);
+    rpc GetClaims (EmptyRequest) returns (ClaimResponse);
+    rpc GetClientsFromAdmin(EmptyRequest) returns (stream ClientResponse);
+    rpc GetClerksFromAdmin(EmptyRequest) returns (stream ClerkResponse);
+}
+
+message EmptyRequest {}
+
+message Admin {
+    int32 ID = 1;
+    string Name = 2;
+}
+
+message ClaimResponse {
+    string message = 1;
+    repeated string roles = 2;
+    repeated string storeIDs = 3;
+}
+
+message ClientResponse {
+    int32 ID = 1;
+    string Name = 2;
+}
+
+message ClerkResponse {
+    int32 ID = 1;
+    string Name = 2;
+}

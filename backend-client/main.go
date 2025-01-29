@@ -1,17 +1,23 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
+	"google.golang.org/grpc"
 
 	"github.com/kelseyhightower/envconfig"
 
-	"github.com/mfontcu/backend-client/middlewares"
+	"github.com/mfontcu/backend-client/middleware/authorize"
+	"github.com/mfontcu/backend-client/pkg/interceptor"
+
+	pc "github.com/mfontcu/backend-client/proto"
 )
 
 type Config struct {
@@ -185,11 +191,63 @@ func readyHandler(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 }
 
-func main() {
-	r := chi.NewRouter()
+// Implementación del servidor gRPC
+type ClientServer struct {
+	pc.UnimplementedClientServiceServer
+}
 
-	r.Use(middleware.Logger)
-	r.Use(middleware.Recoverer)
+func (s *ClientServer) GetClients(req *pc.EmptyRequest, stream grpc.ServerStreamingServer[pc.Client]) error {
+	clients := []*pc.Client{
+		{
+			ID:   1,
+			Name: "Client 1",
+		},
+		{
+			ID:   2,
+			Name: "Client 2",
+		},
+	}
+
+	for _, admin := range clients {
+		if err := stream.Send(admin); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func (s *ClientServer) GetClaims(ctx context.Context, req *pc.EmptyRequest) (*pc.ClaimResponse, error) {
+	rolesValue := ctx.Value(RolesKey)
+	if rolesValue == nil {
+		return nil, fmt.Errorf("user roles not found")
+	}
+
+	storeIDsValue := ctx.Value(StoreIDsKey)
+	if storeIDsValue == nil {
+		return nil, fmt.Errorf("store IDs not found")
+	}
+
+	return &pc.ClaimResponse{
+		Message:  "Request successful",
+		Roles:    rolesValue.([]string),
+		StoreIDs: storeIDsValue.([]string),
+	}, nil
+}
+
+func (s *ClientServer) GetAdminsFromClient(req *pc.EmptyRequest, stream grpc.ServerStreamingServer[pc.AdminResponse]) error {
+	return nil
+}
+
+func (s *ClientServer) GetClerksFromClient(req *pc.EmptyRequest, stream grpc.ServerStreamingServer[pc.ClerkResponse]) error {
+	return nil
+}
+
+func main() {
+	httpRouter := chi.NewRouter()
+
+	httpRouter.Use(middleware.Logger)
+	httpRouter.Use(middleware.Recoverer)
 
 	// Allowed origins
 	allowedSources := []string{
@@ -199,38 +257,83 @@ func main() {
 		"svc.cluster.local", // Domain name for Kubernetes
 		"backend-client",    // Name of the service
 	}
-	allowedOriginValidator := NewAllowedOriginValidator(allowedSources)
-
-	originAllowedValidators := []middlewares.OriginValidator{
-		allowedOriginValidator,
-	}
-	allowedOriginWithoutAuthorizeMidd := middlewares.AllowedOriginWithoutAuthorize(originAllowedValidators)
+	allowedOriginWithoutAuthorizeMidd := authorize.NewAllowedOriginWithoutAuthorizeMiddleware(allowedSources)
 
 	// Roles
 	allowedRoles := map[string][]string{
-		"/client":          {"super_admin"},
-		"/client-claim":    {"super_admin"},
-		"/client-to-admin": {"super_admin", "business_admin", "reatail_admin", "store_management", "store_employee"},
-		"/client-to-clerk": {"super_admin", "business_admin", "reatail_admin", "store_management", "store_employee"},
+		"/client":                                   {"super_admin"},
+		"/client-claim":                             {"super_admin"},
+		"/client-to-admin":                          {"super_admin", "business_admin", "reatail_admin", "store_management", "store_employee"},
+		"/client-to-clerk":                          {"super_admin", "business_admin", "reatail_admin", "store_management", "store_employee"},
+		"/client.ClientService/GetClients":          {"super_admin"},
+		"/client.ClientService/GetClaims":           {"super_admin"},
+		"/client.ClientService/GetAdminsFromClient": {"super_admin", "business_admin", "reatail_admin", "store_management", "store_employee"},
+		"/client.ClientService/GetClerksFromClient": {"super_admin", "business_admin", "reatail_admin", "store_management", "store_employee"},
 	}
 	roleValidator := NewRoleValidator(allowedRoles)
 
 	storeIDsValidator := NewStoreIDsValidator()
 
-	fieldValidators := []middlewares.FieldValidator{
+	fieldValidators := []authorize.FieldValidator{
 		roleValidator,
 		storeIDsValidator,
 	}
-	authorizeMidd := middlewares.Authorize(fieldValidators)
+	authorizeMidd := authorize.NewAuthorize(fieldValidators)
 
-	r.With(authorizeMidd).Get("/client", clientHandler)
-	r.With(authorizeMidd).Get("/client-claim", claimHandler)
-	r.With(allowedOriginWithoutAuthorizeMidd, authorizeMidd).Get("/client-to-admin", adminHandler)
-	r.With(allowedOriginWithoutAuthorizeMidd, authorizeMidd).Get("/client-to-clerk", clerkHandler)
+	httpRouter.With(allowedOriginWithoutAuthorizeMidd.HTTPMiddleware, authorizeMidd.HTTPMiddleware).Get("/client", clientHandler)
+	httpRouter.With(authorizeMidd.HTTPMiddleware).Get("/client-claim", claimHandler)
+	httpRouter.With(allowedOriginWithoutAuthorizeMidd.HTTPMiddleware, authorizeMidd.HTTPMiddleware).Get("/client-to-admin", adminHandler)
+	httpRouter.With(allowedOriginWithoutAuthorizeMidd.HTTPMiddleware, authorizeMidd.HTTPMiddleware).Get("/client-to-clerk", clerkHandler)
 
-	r.Get("/live", liveHandler)
-	r.Get("/ready", readyHandler)
+	httpRouter.Get("/live", liveHandler)
+	httpRouter.Get("/ready", readyHandler)
 
-	log.Println("Server running on port 3092")
-	http.ListenAndServe(":3092", r)
+	httpPort := ":3092"
+	go func() {
+		log.Printf("Servidor HTTP escuchando en %s", httpPort)
+		if err := http.ListenAndServe(httpPort, httpRouter); err != nil {
+			log.Fatalf("Error iniciando servidor HTTP: %v", err)
+		}
+	}()
+
+	// Configure gRPC Interceptors
+	streamInterceptors := map[string]grpc.StreamServerInterceptor{
+		"/client.ClientService/GetClients": authorizeMidd.GRPCStreamInterceptor(),
+		"/client.ClientService/GetAdminsFromClient": interceptor.ChainStreamInterceptors(
+			allowedOriginWithoutAuthorizeMidd.GRPCStreamInterceptor(),
+			authorizeMidd.GRPCStreamInterceptor(),
+		),
+		"/client.ClientService/GetClerksFromClient": interceptor.ChainStreamInterceptors(
+			allowedOriginWithoutAuthorizeMidd.GRPCStreamInterceptor(),
+			authorizeMidd.GRPCStreamInterceptor(),
+		),
+	}
+
+	unaryInterceptors := map[string]grpc.UnaryServerInterceptor{
+		"/client.ClientService/GetClaims": authorizeMidd.GRPCInterceptor(),
+	}
+
+	// Create gRPC server with selective middleware
+	grpcServer := grpc.NewServer(
+		grpc.ChainStreamInterceptor(
+			interceptor.MultiplexorStreamInterceptor(streamInterceptors),
+		),
+		grpc.ChainUnaryInterceptor(
+			interceptor.MultiplexorInterceptor(unaryInterceptors),
+		),
+	)
+
+	// Registry gRPC services
+	pc.RegisterClientServiceServer(grpcServer, &ClientServer{})
+
+	grpcPort := ":50052"
+	listener, err := net.Listen("tcp", grpcPort)
+	if err != nil {
+		log.Fatalf("Error al iniciar listener en el puerto %s: %v", grpcPort, err)
+	}
+
+	log.Printf("Servidor gRPC escuchando en %s", grpcPort)
+	if err := grpcServer.Serve(listener); err != nil {
+		log.Fatalf("Error iniciando servidor gRPC: %v", err)
+	}
 }

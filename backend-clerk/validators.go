@@ -5,18 +5,16 @@ import (
 	"errors"
 	"fmt"
 	"net"
-	"net/http"
 	"strings"
 
 	"github.com/golang-jwt/jwt/v5"
+
+	"github.com/mfontcu/backend-clerk/middleware/authorize"
 )
 
-// ContextKey is the type to avoid collisions in the context.
-type ContextKey string
-
 const (
-	StoreIDsKey ContextKey = "storeIDs"
-	RolesKey    ContextKey = "roles"
+	StoreIDsKey authorize.ContextKey = "storeIDs"
+	RolesKey    authorize.ContextKey = "roles"
 )
 
 // roleValidator validate if the user has the required roles.
@@ -32,7 +30,7 @@ func NewRoleValidator(requiredRoles map[string][]string) *roleValidator {
 }
 
 // Validate if the user has the required roles.
-func (v *roleValidator) Execute(r *http.Request, claims jwt.MapClaims) error {
+func (v *roleValidator) Execute(adapter authorize.RequestAdapter, claims jwt.MapClaims) error {
 	v.claimRoles = []string{}
 
 	if realmAccess, ok := claims["realm_access"].(map[string]interface{}); ok {
@@ -43,9 +41,10 @@ func (v *roleValidator) Execute(r *http.Request, claims jwt.MapClaims) error {
 		}
 	}
 
-	requiredRoles, ok := v.requiredRoles[r.URL.Path]
+	urlPath := adapter.GetPath()
+	requiredRoles, ok := v.requiredRoles[urlPath]
 	if !ok {
-		return fmt.Errorf("no roles configured for path: %s", r.URL.Path)
+		return fmt.Errorf("no roles configured for path: %s", urlPath)
 	}
 
 	for _, role := range v.claimRoles {
@@ -56,7 +55,7 @@ func (v *roleValidator) Execute(r *http.Request, claims jwt.MapClaims) error {
 		}
 	}
 
-	return fmt.Errorf("user does not have the required role")
+	return errors.New("missing required roles")
 }
 
 func (v roleValidator) AddToContext(ctx context.Context) context.Context {
@@ -77,7 +76,7 @@ func NewStoreIDsValidator() *storeIDsValidator {
 }
 
 // Validate if the user has the required StoreIDs.
-func (v *storeIDsValidator) Execute(r *http.Request, claims jwt.MapClaims) error {
+func (v *storeIDsValidator) Execute(adapter authorize.RequestAdapter, claims jwt.MapClaims) error {
 	v.claimStoreIDs = []string{}
 
 	storeIDs, ok := claims[storeIDsClaimKey].([]interface{})
@@ -88,7 +87,7 @@ func (v *storeIDsValidator) Execute(r *http.Request, claims jwt.MapClaims) error
 		return nil // Tiene acceso
 	}
 
-	return fmt.Errorf("missing store IDs")
+	return errors.New("missing store ID's")
 }
 
 func (v storeIDsValidator) AddToContext(ctx context.Context) context.Context {
@@ -108,23 +107,25 @@ func NewAllowedOriginValidator(allowedSources []string) *allowedOriginValidator 
 }
 
 // Validate if the request comes from an allowed source.
-func (v *allowedOriginValidator) Execute(r *http.Request) error {
-	hostAddr, _, err := net.SplitHostPort(r.RemoteAddr)
+func (v *allowedOriginValidator) Execute(adapter authorize.RequestAdapter) error {
+	reqRemoteAddr := adapter.GetRemoteAddr()
+	hostAddr, _, err := net.SplitHostPort(reqRemoteAddr)
 	if err != nil {
-		hostAddr = r.RemoteAddr // Si falla, usar RemoteAddr directamente
+		hostAddr = reqRemoteAddr // If it fails, use the host address directly
 	}
 
-	host, _, err := net.SplitHostPort(r.Host)
+	reqHost := adapter.GetHost()
+	host, _, err := net.SplitHostPort(reqHost)
 	if err != nil {
-		host = r.Host // Si falla, usar host directamente
+		host = reqHost // If it fails, use the host directly
 	}
 
-	// Validar si el host pertenece a las fuentes permitidas
+	// Validate if the request comes from an allowed source.
 	for _, source := range v.allowedSources {
 		if strings.HasSuffix(hostAddr, source) || hostAddr == source || strings.HasSuffix(host, source) || host == source {
-			return nil // Es un origen permitido
+			return nil // It is allowed
 		}
 	}
 
-	return errors.New("request is allowed")
+	return errors.New("request is not allowed")
 }

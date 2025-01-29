@@ -1,17 +1,23 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
+	"google.golang.org/grpc"
 
 	"github.com/kelseyhightower/envconfig"
 
-	"github.com/mfontcu/backend-admin/middlewares"
+	"github.com/mfontcu/backend-admin/middleware/authorize"
+	"github.com/mfontcu/backend-admin/pkg/interceptor"
+
+	pa "github.com/mfontcu/backend-admin/proto"
 )
 
 type Config struct {
@@ -185,11 +191,62 @@ func readyHandler(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 }
 
-func main() {
-	r := chi.NewRouter()
+type AdminServer struct {
+	pa.UnimplementedAdminServiceServer
+}
 
-	r.Use(middleware.Logger)
-	r.Use(middleware.Recoverer)
+func (s *AdminServer) GetAdmins(req *pa.EmptyRequest, stream grpc.ServerStreamingServer[pa.Admin]) error {
+	admins := []*pa.Admin{
+		{
+			ID:   1,
+			Name: "Admin 1",
+		},
+		{
+			ID:   2,
+			Name: "Admin 2",
+		},
+	}
+
+	for _, admin := range admins {
+		if err := stream.Send(admin); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func (s *AdminServer) GetClaims(ctx context.Context, req *pa.EmptyRequest) (*pa.ClaimResponse, error) {
+	rolesValue := ctx.Value(RolesKey)
+	if rolesValue == nil {
+		return nil, fmt.Errorf("user roles not found")
+	}
+
+	storeIDsValue := ctx.Value(StoreIDsKey)
+	if storeIDsValue == nil {
+		return nil, fmt.Errorf("store IDs not found")
+	}
+
+	return &pa.ClaimResponse{
+		Message:  "Request successful",
+		Roles:    rolesValue.([]string),
+		StoreIDs: storeIDsValue.([]string),
+	}, nil
+}
+
+func (s *AdminServer) GetClientsFromClient(req *pa.EmptyRequest, stream grpc.ServerStreamingServer[pa.ClientResponse]) error {
+	return nil
+}
+
+func (s *AdminServer) GetClerksFromClient(req *pa.EmptyRequest, stream grpc.ServerStreamingServer[pa.ClerkResponse]) error {
+	return nil
+}
+
+func main() {
+	httpRouter := chi.NewRouter()
+
+	httpRouter.Use(middleware.Logger)
+	httpRouter.Use(middleware.Recoverer)
 
 	// Allowed origins
 	allowedSources := []string{
@@ -199,38 +256,83 @@ func main() {
 		"svc.cluster.local", // Domain name for Kubernetes
 		"backend-admin",     // Name of the service
 	}
-	allowedOriginValidator := NewAllowedOriginValidator(allowedSources)
-
-	originAllowedValidators := []middlewares.OriginValidator{
-		allowedOriginValidator,
-	}
-	allowedOriginWithoutAuthorizeMidd := middlewares.AllowedOriginWithoutAuthorize(originAllowedValidators)
+	allowedOriginWithoutAuthorizeMidd := authorize.NewAllowedOriginWithoutAuthorizeMiddleware(allowedSources)
 
 	// Roles
 	allowedRoles := map[string][]string{
-		"/admin":           {"super_admin"},
-		"/admin-claim":     {"super_admin"},
-		"/admin-to-clerk":  {"super_admin", "business_admin", "reatail_admin", "store_management", "store_employee"},
-		"/admin-to-client": {"super_admin", "business_admin", "reatail_admin", "store_management", "store_employee"},
+		"/admin":                                  {"super_admin"},
+		"/admin-claim":                            {"super_admin"},
+		"/admin-to-clerk":                         {"super_admin", "business_admin", "reatail_admin", "store_management", "store_employee"},
+		"/admin-to-client":                        {"super_admin", "business_admin", "reatail_admin", "store_management", "store_employee"},
+		"/admin.AdminService/GetAdmins":           {"super_admin"},
+		"/admin.AdminService/GetClaims":           {"super_admin"},
+		"/admin.AdminService/GetClerksFromAdmin":  {"super_admin", "business_admin", "reatail_admin", "store_management", "store_employee"},
+		"/admin.AdminService/GetClientsFromAdmin": {"super_admin", "business_admin", "reatail_admin", "store_management", "store_employee"},
 	}
 	roleValidator := NewRoleValidator(allowedRoles)
 
 	storeIDsValidator := NewStoreIDsValidator()
 
-	fieldValidators := []middlewares.FieldValidator{
+	fieldValidators := []authorize.FieldValidator{
 		roleValidator,
 		storeIDsValidator,
 	}
-	authorizeMidd := middlewares.Authorize(fieldValidators)
+	authorizeMidd := authorize.NewAuthorize(fieldValidators)
 
-	r.With(allowedOriginWithoutAuthorizeMidd, authorizeMidd).Get("/admin", adminHandler)
-	r.With(authorizeMidd).Get("/admin-claim", claimHandler)
-	r.With(allowedOriginWithoutAuthorizeMidd, authorizeMidd).Get("/admin-to-clerk", clerkHandler)
-	r.With(allowedOriginWithoutAuthorizeMidd, authorizeMidd).Get("/admin-to-client", clientHandler)
+	httpRouter.With(allowedOriginWithoutAuthorizeMidd.HTTPMiddleware, authorizeMidd.HTTPMiddleware).Get("/admin", adminHandler)
+	httpRouter.With(authorizeMidd.HTTPMiddleware).Get("/admin-claim", claimHandler)
+	httpRouter.With(allowedOriginWithoutAuthorizeMidd.HTTPMiddleware, authorizeMidd.HTTPMiddleware).Get("/admin-to-clerk", clerkHandler)
+	httpRouter.With(allowedOriginWithoutAuthorizeMidd.HTTPMiddleware, authorizeMidd.HTTPMiddleware).Get("/admin-to-client", clientHandler)
 
-	r.Get("/live", liveHandler)
-	r.Get("/ready", readyHandler)
+	httpRouter.Get("/live", liveHandler)
+	httpRouter.Get("/ready", readyHandler)
 
-	log.Println("Server running on port 3090")
-	http.ListenAndServe(":3090", r)
+	httpPort := ":3090"
+	go func() {
+		log.Printf("Servidor HTTP escuchando en %s", httpPort)
+		if err := http.ListenAndServe(httpPort, httpRouter); err != nil {
+			log.Fatalf("Error iniciando servidor HTTP: %v", err)
+		}
+	}()
+
+	// Configure gRPC Interceptors
+	streamInterceptors := map[string]grpc.StreamServerInterceptor{
+		"/admin.AdminService/GetAdmins": authorizeMidd.GRPCStreamInterceptor(),
+		"/admin.AdminService/GetClientsFromAdmin": interceptor.ChainStreamInterceptors(
+			allowedOriginWithoutAuthorizeMidd.GRPCStreamInterceptor(),
+			authorizeMidd.GRPCStreamInterceptor(),
+		),
+		"/admin.AdminService/GetClerksFromAdmin": interceptor.ChainStreamInterceptors(
+			allowedOriginWithoutAuthorizeMidd.GRPCStreamInterceptor(),
+			authorizeMidd.GRPCStreamInterceptor(),
+		),
+	}
+
+	unaryInterceptors := map[string]grpc.UnaryServerInterceptor{
+		"/admin.AdminService/GetClaims": authorizeMidd.GRPCInterceptor(),
+	}
+
+	// Create gRPC server with selective middleware
+	grpcServer := grpc.NewServer(
+		grpc.ChainStreamInterceptor(
+			interceptor.MultiplexorStreamInterceptor(streamInterceptors),
+		),
+		grpc.ChainUnaryInterceptor(
+			interceptor.MultiplexorInterceptor(unaryInterceptors),
+		),
+	)
+
+	// Registry gRPC services
+	pa.RegisterAdminServiceServer(grpcServer, &AdminServer{})
+
+	grpcPort := ":50050"
+	listener, err := net.Listen("tcp", grpcPort)
+	if err != nil {
+		log.Fatalf("Error al iniciar listener en el puerto %s: %v", grpcPort, err)
+	}
+
+	log.Printf("Servidor gRPC escuchando en %s", grpcPort)
+	if err := grpcServer.Serve(listener); err != nil {
+		log.Fatalf("Error iniciando servidor gRPC: %v", err)
+	}
 }
