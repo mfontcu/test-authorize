@@ -1,4 +1,4 @@
-package main
+package transportx
 
 import (
 	"context"
@@ -9,7 +9,7 @@ import (
 
 	"github.com/golang-jwt/jwt/v5"
 
-	"github.com/mfontcu/backend-clerk/middleware/authorize"
+	"github.com/mfontcu/backend-admin/middleware/authorize"
 )
 
 const (
