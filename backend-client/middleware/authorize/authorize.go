@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/go-chi/chi/v5"
 	"github.com/golang-jwt/jwt/v5"
 
 	"google.golang.org/grpc"
@@ -289,7 +290,7 @@ func (h httpRequestAdapter) Context() context.Context {
 
 // GetPath returns the path of the request.
 func (h httpRequestAdapter) GetPath() string {
-	return h.request.URL.Path
+	return chi.RouteContext(h.request.Context()).RoutePattern()
 }
 
 // GetHeader returns the value of the header with the given key.
