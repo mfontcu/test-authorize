@@ -50,11 +50,32 @@ func (h AdminHandler) Setup(mux *chi.Mux) {
 	allowedOriginWithoutAuthorizeMidd := authorize.NewAllowedOriginWithoutAuthorizeMiddleware(allowedSources)
 
 	// Roles
-	allowedRoles := map[string][]string{
-		"/admin":           {"super_admin"},
-		"/admin-claim":     {"super_admin"},
-		"/admin-to-clerk":  {"super_admin", "business_admin", "reatail_admin", "store_management", "store_employee"},
-		"/admin-to-client": {"super_admin", "business_admin", "reatail_admin", "store_management", "store_employee"},
+	allowedRoles := []transportx.AllowedRoles{
+		{
+			Path:    "/admin",
+			Roles:   []string{"super_admin"},
+			Methods: []string{http.MethodGet},
+		},
+		{
+			Path:    "/admin-claim",
+			Roles:   []string{"super_admin"},
+			Methods: []string{http.MethodGet},
+		},
+		{
+			Path:    "/admin-to-clerk",
+			Roles:   []string{"super_admin", "business_admin", "reatail_admin", "store_management", "store_employee"},
+			Methods: []string{http.MethodGet},
+		},
+		{
+			Path:    "/admin-to-client",
+			Roles:   []string{"super_admin", "business_admin", "reatail_admin", "store_management", "store_employee"},
+			Methods: []string{http.MethodGet},
+		},
+		{
+			Path:    "/test/{id}",
+			Roles:   []string{"super_admin", "business_admin", "reatail_admin", "store_management", "store_employee"},
+			Methods: []string{http.MethodGet},
+		},
 	}
 	roleValidator := transportx.NewRoleValidator(allowedRoles)
 
@@ -66,13 +87,21 @@ func (h AdminHandler) Setup(mux *chi.Mux) {
 	}
 	authorizeMidd := authorize.NewAuthorize(fieldValidators)
 
-	mux.With(allowedOriginWithoutAuthorizeMidd.HTTPMiddleware, authorizeMidd.HTTPMiddleware).Get("/admin", h.getAdmins)
+	mux.With(authorizeMidd.HTTPMiddleware).Get("/admin", h.getAdmins)
 	mux.With(authorizeMidd.HTTPMiddleware).Get("/admin-claim", h.GetAdminClaim)
 	mux.With(allowedOriginWithoutAuthorizeMidd.HTTPMiddleware, authorizeMidd.HTTPMiddleware).Get("/admin-to-clerk", h.getClerksFromAdmin)
 	mux.With(allowedOriginWithoutAuthorizeMidd.HTTPMiddleware, authorizeMidd.HTTPMiddleware).Get("/admin-to-client", h.getClientsFromAdmin)
 
+	mux.With(authorizeMidd.HTTPMiddleware).Get("/test/{id}", h.getTest)
+
 	mux.Get("/live", h.liveHandler)
 	mux.Get("/ready", h.readyHandler)
+}
+
+func (h AdminHandler) getTest(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	log.Println("backend-admin", id)
+	w.WriteHeader(http.StatusOK)
 }
 
 type Admin struct {

@@ -56,11 +56,23 @@ func (s *ClerkServer) Setup() *grpc.Server {
 	allowedOriginWithoutAuthorizeMidd := authorize.NewAllowedOriginWithoutAuthorizeMiddleware(allowedSources)
 
 	// Roles
-	allowedRoles := map[string][]string{
-		"/clerk.ClerkService/GetClerks":           {"super_admin"},
-		"/clerk.ClerkService/GetClaims":           {"super_admin"},
-		"/clerk.ClerkService/GetAdminsFromClerk":  {"super_admin", "business_admin", "reatail_admin", "store_management", "store_employee"},
-		"/clerk.ClerkService/GetClientsFromClerk": {"super_admin", "business_admin", "reatail_admin", "store_management", "store_employee"},
+	allowedRoles := []transportx.AllowedRoles{
+		{
+			Path:  "/clerk.ClerkService/GetClerks",
+			Roles: []string{"super_admin"},
+		},
+		{
+			Path:  "/clerk.ClerkService/GetClaims",
+			Roles: []string{"super_admin"},
+		},
+		{
+			Path:  "/clerk.ClerkService/GetAdminsFromClerk",
+			Roles: []string{"super_admin", "business_admin", "reatail_admin", "store_management", "store_employee"},
+		},
+		{
+			Path:  "/clerk.ClerkService/GetClientsFromClerk",
+			Roles: []string{"super_admin", "business_admin", "reatail_admin", "store_management", "store_employee"},
+		},
 	}
 	roleValidator := transportx.NewRoleValidator(allowedRoles)
 

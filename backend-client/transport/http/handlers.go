@@ -50,11 +50,27 @@ func (h ClientHandler) Setup(mux *chi.Mux) {
 	allowedOriginWithoutAuthorizeMidd := authorize.NewAllowedOriginWithoutAuthorizeMiddleware(allowedSources)
 
 	// Roles
-	allowedRoles := map[string][]string{
-		"/client":          {"super_admin"},
-		"/client-claim":    {"super_admin"},
-		"/client-to-clerk": {"super_admin", "business_admin", "reatail_admin", "store_management", "store_employee"},
-		"/client-to-admin": {"super_admin", "business_admin", "reatail_admin", "store_management", "store_employee"},
+	allowedRoles := []transportx.AllowedRoles{
+		{
+			Path:    "/client",
+			Roles:   []string{"super_admin"},
+			Methods: []string{http.MethodGet},
+		},
+		{
+			Path:    "/client-claim",
+			Roles:   []string{"super_admin"},
+			Methods: []string{http.MethodGet},
+		},
+		{
+			Path:    "/client-to-clerk",
+			Roles:   []string{"super_admin", "business_admin", "reatail_admin", "store_management", "store_employee"},
+			Methods: []string{http.MethodGet},
+		},
+		{
+			Path:    "/client-to-admin",
+			Roles:   []string{"super_admin", "business_admin", "reatail_admin", "store_management", "store_employee"},
+			Methods: []string{http.MethodGet},
+		},
 	}
 	roleValidator := transportx.NewRoleValidator(allowedRoles)
 

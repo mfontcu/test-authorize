@@ -50,11 +50,27 @@ func (h ClerkHandler) Setup(mux *chi.Mux) {
 	allowedOriginWithoutAuthorizeMidd := authorize.NewAllowedOriginWithoutAuthorizeMiddleware(allowedSources)
 
 	// Roles
-	allowedRoles := map[string][]string{
-		"/clerk":           {"super_admin"},
-		"/clerk-claim":     {"super_admin"},
-		"/clerk-to-admin":  {"super_admin", "business_admin", "reatail_admin", "store_management", "store_employee"},
-		"/clerk-to-client": {"super_admin", "business_admin", "reatail_admin", "store_management", "store_employee"},
+	allowedRoles := []transportx.AllowedRoles{
+		{
+			Path:    "/clerk",
+			Roles:   []string{"super_admin"},
+			Methods: []string{http.MethodGet},
+		},
+		{
+			Path:    "/clerk-claim",
+			Roles:   []string{"super_admin"},
+			Methods: []string{http.MethodGet},
+		},
+		{
+			Path:    "/clerk-to-admin",
+			Roles:   []string{"super_admin", "business_admin", "reatail_admin", "store_management", "store_employee"},
+			Methods: []string{http.MethodGet},
+		},
+		{
+			Path:    "/clerk-to-client",
+			Roles:   []string{"super_admin", "business_admin", "reatail_admin", "store_management", "store_employee"},
+			Methods: []string{http.MethodGet},
+		},
 	}
 	roleValidator := transportx.NewRoleValidator(allowedRoles)
 

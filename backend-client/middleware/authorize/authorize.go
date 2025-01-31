@@ -30,6 +30,7 @@ const (
 type RequestAdapter interface {
 	Context() context.Context
 	GetPath() string
+	GetMethod() string
 	GetHeader(key string) string
 	GetRemoteAddr() string
 	GetHost() string
@@ -293,6 +294,10 @@ func (h httpRequestAdapter) GetPath() string {
 	return chi.RouteContext(h.request.Context()).RoutePattern()
 }
 
+func (h httpRequestAdapter) GetMethod() string {
+	return h.request.Method
+}
+
 // GetHeader returns the value of the header with the given key.
 func (h httpRequestAdapter) GetHeader(key string) string {
 	return h.request.Header.Get(key)
@@ -349,6 +354,10 @@ func (g grpcRequestAdapter) Context() context.Context {
 // GetPath returns the path of the request.
 func (g grpcRequestAdapter) GetPath() string {
 	return g.fullMethod
+}
+
+func (g grpcRequestAdapter) GetMethod() string {
+	return ""
 }
 
 // GetHeader returns the value of the header with the given key.

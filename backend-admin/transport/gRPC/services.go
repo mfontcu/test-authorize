@@ -55,11 +55,23 @@ func (s *AdminServer) Setup() *grpc.Server {
 	allowedOriginWithoutAuthorizeMidd := authorize.NewAllowedOriginWithoutAuthorizeMiddleware(allowedSources)
 
 	// Roles
-	allowedRoles := map[string][]string{
-		"/admin.AdminService/GetAdmins":           {"super_admin"},
-		"/admin.AdminService/GetClaims":           {"super_admin"},
-		"/admin.AdminService/GetClerksFromAdmin":  {"super_admin", "business_admin", "reatail_admin", "store_management", "store_employee"},
-		"/admin.AdminService/GetClientsFromAdmin": {"super_admin", "business_admin", "reatail_admin", "store_management", "store_employee"},
+	allowedRoles := []transportx.AllowedRoles{
+		{
+			Path:  "/admin.AdminService/GetAdmins",
+			Roles: []string{"super_admin"},
+		},
+		{
+			Path:  "/admin.AdminService/GetClaims",
+			Roles: []string{"super_admin"},
+		},
+		{
+			Path:  "/admin.AdminService/GetClerksFromAdmin",
+			Roles: []string{"super_admin", "business_admin", "reatail_admin", "store_management", "store_employee"},
+		},
+		{
+			Path:  "/admin.AdminService/GetClientsFromAdmin",
+			Roles: []string{"super_admin", "business_admin", "reatail_admin", "store_management", "store_employee"},
+		},
 	}
 	roleValidator := transportx.NewRoleValidator(allowedRoles)
 
@@ -74,7 +86,6 @@ func (s *AdminServer) Setup() *grpc.Server {
 	// Configure gRPC Interceptors
 	streamInterceptors := map[string]grpc.StreamServerInterceptor{
 		"/admin.AdminService/GetAdmins": interceptor.ChainStreamInterceptors(
-			allowedOriginWithoutAuthorizeMidd.GRPCStreamInterceptor(),
 			authorizeMidd.GRPCStreamInterceptor(),
 		),
 		"/admin.AdminService/GetClientsFromAdmin": interceptor.ChainStreamInterceptors(
