@@ -45,17 +45,37 @@ type FieldValidator interface {
 	AddToContext(ctx context.Context) context.Context
 }
 
+// AuthenticationProvider define the interface for authentication providers.
+type AuthenticationProvider interface {
+	Authenticate(ctx context.Context, token string) (context.Context, error)
+}
+
 // authorize define the middleware for handling authorization.
 type authorize struct {
-	validators []FieldValidator
+	validators     []FieldValidator
+	authentication AuthenticationProvider
 }
 
 // NewAuthorize creates a new instance of the Authorize middleware.
 func NewAuthorize(
 	validators []FieldValidator,
+	options ...func(*authorize),
 ) *authorize {
-	return &authorize{
+	authorize := &authorize{
 		validators: validators,
+	}
+
+	for _, op := range options {
+		op(authorize)
+	}
+
+	return authorize
+}
+
+// WithAuthentication sets the authentication provider for the authorize middleware.
+func WithAuthentication(auth AuthenticationProvider) func(*authorize) {
+	return func(a *authorize) {
+		a.authentication = auth
 	}
 }
 
@@ -63,22 +83,17 @@ func NewAuthorize(
 func (a *authorize) HTTPMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		adapter := newHTTPRequestAdapter(r)
+		ctx, err := a.authorizeRequest(r.Context(), adapter)
 
-		if adapter.ShouldSkipAuthorize() {
-			slog.Log(r.Context(), slog.LevelInfo, "skipping authorization")
-			adapter.RemoveAuthorization()
+		if ctx == nil { // Se omite la autorización y continúa el request
 			next.ServeHTTP(w, r)
 			return
 		}
 
-		ctx, err := a.extractAndValidateClaims(adapter)
 		if err != nil {
-			slog.Log(ctx, slog.LevelWarn, err.Error())
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
-
-		adapter.RemoveAuthorization()
 
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
@@ -88,59 +103,76 @@ func (a *authorize) HTTPMiddleware(next http.Handler) http.Handler {
 func (a *authorize) GRPCInterceptor() grpc.UnaryServerInterceptor {
 	return func(ctx context.Context, req interface{}, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (interface{}, error) {
 		adapter := newGRPCRequestAdapter(ctx, info.FullMethod)
+		newCtx, err := a.authorizeRequest(ctx, adapter)
 
-		if adapter.ShouldSkipAuthorize() {
-			slog.Log(ctx, slog.LevelInfo, "skipping authorization")
-			adapter.RemoveAuthorization()
+		if newCtx == nil { // Se omite la autorización y continúa el request
 			return handler(ctx, req)
 		}
 
-		ctx, err := a.extractAndValidateClaims(adapter)
 		if err != nil {
-			slog.Log(ctx, slog.LevelWarn, err.Error())
 			return nil, status.Error(codes.Unauthenticated, "unauthorized")
 		}
 
-		adapter.RemoveAuthorization()
-
-		return handler(ctx, req)
+		return handler(newCtx, req)
 	}
 }
 
 // GRPCStreamInterceptor applies authorization validation for gRPC streaming requests.
 func (a *authorize) GRPCStreamInterceptor() grpc.StreamServerInterceptor {
 	return func(srv interface{}, ss grpc.ServerStream, info *grpc.StreamServerInfo, handler grpc.StreamHandler) error {
-		adapter := newGRPCRequestAdapter(ss.Context(), info.FullMethod)
+		ctx, adapter := ss.Context(), newGRPCRequestAdapter(ss.Context(), info.FullMethod)
+		newCtx, err := a.authorizeRequest(ctx, adapter)
 
-		if adapter.ShouldSkipAuthorize() {
-			slog.Log(ss.Context(), slog.LevelInfo, "skipping authorization")
-			adapter.RemoveAuthorization()
+		if newCtx == nil { // Omit the authorization and continue the request
 			return handler(srv, ss)
 		}
 
-		ctx, err := a.extractAndValidateClaims(adapter)
 		if err != nil {
-			slog.Log(ctx, slog.LevelWarn, err.Error())
 			return status.Error(codes.Unauthenticated, "unauthorized")
 		}
 
-		adapter.RemoveAuthorization()
-
 		wrappedStream := newWrapServerStream(ss)
-		wrappedStream.WrappedContext = ctx
+		wrappedStream.WrappedContext = newCtx
 
 		return handler(srv, wrappedStream)
 	}
 }
 
-// extractAndValidateClaims handles token extraction and validation.
-func (a *authorize) extractAndValidateClaims(adapter RequestAdapter) (context.Context, error) {
-	tokenString, err := adapter.GetBearerToken()
-	if err != nil {
-		return nil, fmt.Errorf("error getting bearer token: %w", err)
+// authorizeRequest handles common authorization logic for HTTP and gRPC.
+func (a *authorize) authorizeRequest(ctx context.Context, adapter RequestAdapter) (context.Context, error) {
+	if adapter.ShouldSkipAuthorize() {
+		slog.Log(ctx, slog.LevelInfo, "skipping authorization")
+		adapter.RemoveAuthorization()
+		return nil, nil // Return nil context to skip authorization
 	}
 
-	claims, err := a.extractClaims(tokenString)
+	tokenString, err := adapter.GetBearerToken()
+	if err != nil {
+		slog.Log(ctx, slog.LevelWarn, err.Error())
+		return nil, fmt.Errorf("unauthorized")
+	}
+
+	if a.authentication != nil {
+		ctx, err = a.authentication.Authenticate(ctx, tokenString)
+		if err != nil {
+			slog.Log(ctx, slog.LevelWarn, err.Error())
+			return nil, fmt.Errorf("unauthorized")
+		}
+	}
+
+	ctx, err = a.extractAndValidateClaims(adapter, tokenString)
+	if err != nil {
+		slog.Log(ctx, slog.LevelWarn, err.Error())
+		return nil, fmt.Errorf("unauthorized")
+	}
+
+	adapter.RemoveAuthorization()
+	return ctx, nil
+}
+
+// extractAndValidateClaims handles token extraction and validation.
+func (a *authorize) extractAndValidateClaims(adapter RequestAdapter, token string) (context.Context, error) {
+	claims, err := a.extractClaims(token)
 	if err != nil {
 		return nil, fmt.Errorf("error extracting claims: %w", err)
 	}
@@ -357,7 +389,7 @@ func (g grpcRequestAdapter) GetPath() string {
 }
 
 func (g grpcRequestAdapter) GetMethod() string {
-	return "unknown"
+	return ""
 }
 
 // GetHeader returns the value of the header with the given key.

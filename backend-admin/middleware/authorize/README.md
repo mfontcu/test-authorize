@@ -34,6 +34,27 @@ http.Handle("/secure", authMiddleware.HTTPMiddleware(http.HandlerFunc(secureHand
 
 This ensures that all requests to `/secure` are validated before being processed.
 
+## Authentication with JWT
+
+### Authentication Provider
+
+The `AuthenticationProvider` interface defines a mechanism to authenticate requests using JWT tokens.
+
+```go
+type AuthenticationProvider interface {
+    Authenticate(ctx context.Context, token string) (context.Context, error)
+}
+```
+
+### Setting Up Authentication
+
+To integrate authentication into the `authorize` middleware, use `WithAuthentication`:
+
+```go
+authProvider := MyJWTAuthProvider{}
+authMiddleware := authorize.NewAuthorize(validators, authorize.WithAuthentication(authProvider))
+```
+
 ## gRPC Interceptor
 
 ### Purpose

@@ -86,6 +86,7 @@ func (s *AdminServer) Setup() *grpc.Server {
 	// Configure gRPC Interceptors
 	streamInterceptors := map[string]grpc.StreamServerInterceptor{
 		"/admin.AdminService/GetAdmins": interceptor.ChainStreamInterceptors(
+			allowedOriginWithoutAuthorizeMidd.GRPCStreamInterceptor(),
 			authorizeMidd.GRPCStreamInterceptor(),
 		),
 		"/admin.AdminService/GetClientsFromAdmin": interceptor.ChainStreamInterceptors(

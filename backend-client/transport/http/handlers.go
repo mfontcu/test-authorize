@@ -80,7 +80,16 @@ func (h ClientHandler) Setup(mux *chi.Mux) {
 		roleValidator,
 		storeIDsValidator,
 	}
-	authorizeMidd := authorize.NewAuthorize(fieldValidators)
+
+	// provider, err := transportx.NewKeycloakProvider("http://keycloak.k8s.com", "iskaypet")
+	// if err != nil {
+	// 	log.Fatalf("failed to create keycloak provider, err: %v", err)
+	// }
+
+	authorizeMidd := authorize.NewAuthorize(
+		fieldValidators,
+		// authorize.WithAuthentication(provider),
+	)
 
 	mux.With(allowedOriginWithoutAuthorizeMidd.HTTPMiddleware, authorizeMidd.HTTPMiddleware).Get("/client", h.getClients)
 	mux.With(authorizeMidd.HTTPMiddleware).Get("/client-claim", h.getClientClaim)
