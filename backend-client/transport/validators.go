@@ -111,6 +111,7 @@ type storeIDsValidator struct {
 	claimStoreIDs []string
 }
 
+// NewStoreIDsValidator creates a new instance of storeIDsValidator.
 func NewStoreIDsValidator() *storeIDsValidator {
 	return &storeIDsValidator{}
 }

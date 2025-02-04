@@ -58,6 +58,10 @@ func (v *roleValidator) Execute(adapter authorize.RequestAdapter, claims jwt.Map
 	return fmt.Errorf("no roles configured for path %s", urlPath)
 }
 
+func (v roleValidator) AddToContext(ctx context.Context) context.Context {
+	return context.WithValue(ctx, RolesKey, v.claimRoles)
+}
+
 // Extract roles from JWT claims.
 func extractRoles(claims jwt.MapClaims) []string {
 	if realmAccess, ok := claims["realm_access"].(map[string]interface{}); ok {
@@ -98,10 +102,6 @@ func hasRequiredRole(userRoles, requiredRoles []string) bool {
 	return false
 }
 
-func (v roleValidator) AddToContext(ctx context.Context) context.Context {
-	return context.WithValue(ctx, RolesKey, v.claimRoles)
-}
-
 const (
 	storeIDsClaimKey = "store_ids"
 )
@@ -111,6 +111,7 @@ type storeIDsValidator struct {
 	claimStoreIDs []string
 }
 
+// NewStoreIDsValidator creates a new instance of storeIDsValidator.
 func NewStoreIDsValidator() *storeIDsValidator {
 	return &storeIDsValidator{}
 }

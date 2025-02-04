@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
 	"net/http"
@@ -17,6 +18,7 @@ import (
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/peer"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/proto"
 )
 
 // ContextKey is the type to avoid collisions in the context.
@@ -24,6 +26,8 @@ type ContextKey string
 
 const (
 	skipAuthorizeKey ContextKey = "skip_auth"
+	unaryRequestKey  ContextKey = "unaryRequest"
+	streamRequestKey ContextKey = "streamRequest"
 )
 
 // RequestAdapter define the interface for request adapters.
@@ -31,6 +35,9 @@ type RequestAdapter interface {
 	Context() context.Context
 	GetPath() string
 	GetMethod() string
+	GetBody() ([]byte, error)
+	GetURLParams() map[string]string
+	GetQueryParams() map[string][]string
 	GetHeader(key string) string
 	GetRemoteAddr() string
 	GetHost() string
@@ -85,7 +92,7 @@ func (a *authorize) HTTPMiddleware(next http.Handler) http.Handler {
 		adapter := newHTTPRequestAdapter(r)
 		ctx, err := a.authorizeRequest(r.Context(), adapter)
 
-		if ctx == nil { // Se omite la autorización y continúa el request
+		if ctx == nil && err == nil { // Omits the authorization and continues the request
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -102,10 +109,11 @@ func (a *authorize) HTTPMiddleware(next http.Handler) http.Handler {
 // GRPCInterceptor applies authorization validation for gRPC unary requests.
 func (a *authorize) GRPCInterceptor() grpc.UnaryServerInterceptor {
 	return func(ctx context.Context, req interface{}, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (interface{}, error) {
+		ctx = context.WithValue(ctx, unaryRequestKey, req)
 		adapter := newGRPCRequestAdapter(ctx, info.FullMethod)
-		newCtx, err := a.authorizeRequest(ctx, adapter)
 
-		if newCtx == nil { // Se omite la autorización y continúa el request
+		newCtx, err := a.authorizeRequest(ctx, adapter)
+		if newCtx == nil && err == nil { // Omits the authorization and continues the request
 			return handler(ctx, req)
 		}
 
@@ -120,10 +128,13 @@ func (a *authorize) GRPCInterceptor() grpc.UnaryServerInterceptor {
 // GRPCStreamInterceptor applies authorization validation for gRPC streaming requests.
 func (a *authorize) GRPCStreamInterceptor() grpc.StreamServerInterceptor {
 	return func(srv interface{}, ss grpc.ServerStream, info *grpc.StreamServerInfo, handler grpc.StreamHandler) error {
-		ctx, adapter := ss.Context(), newGRPCRequestAdapter(ss.Context(), info.FullMethod)
-		newCtx, err := a.authorizeRequest(ctx, adapter)
+		ctx, wrappedStream := ss.Context(), newWrapServerStream(ss)
+		ctx = context.WithValue(ctx, streamRequestKey, wrappedStream)
 
-		if newCtx == nil { // Omit the authorization and continue the request
+		adapter := newGRPCRequestAdapter(ctx, info.FullMethod)
+
+		newCtx, err := a.authorizeRequest(ctx, adapter)
+		if newCtx == nil && err == nil { // Omits the authorization and continues the request
 			return handler(srv, ss)
 		}
 
@@ -131,7 +142,6 @@ func (a *authorize) GRPCStreamInterceptor() grpc.StreamServerInterceptor {
 			return status.Error(codes.Unauthenticated, "unauthorized")
 		}
 
-		wrappedStream := newWrapServerStream(ss)
 		wrappedStream.WrappedContext = newCtx
 
 		return handler(srv, wrappedStream)
@@ -247,6 +257,7 @@ func (a *allowedOriginWithoutAuthorizeMiddleware) GRPCInterceptor() grpc.UnarySe
 		info *grpc.UnaryServerInfo,
 		handler grpc.UnaryHandler,
 	) (interface{}, error) {
+		ctx = context.WithValue(ctx, unaryRequestKey, req)
 		adapter := newGRPCRequestAdapter(ctx, info.FullMethod)
 
 		if a.validateRequest(adapter) {
@@ -265,12 +276,13 @@ func (a *allowedOriginWithoutAuthorizeMiddleware) GRPCStreamInterceptor() grpc.S
 		info *grpc.StreamServerInfo,
 		handler grpc.StreamHandler,
 	) error {
-		ctx := ss.Context()
+		ctx, wrappedStream := ss.Context(), newWrapServerStream(ss)
+		ctx = context.WithValue(ctx, streamRequestKey, wrappedStream)
+
 		adapter := newGRPCRequestAdapter(ctx, info.FullMethod)
 
 		if a.validateRequest(adapter) {
 			ctx = context.WithValue(ctx, skipAuthorizeKey, true)
-			wrappedStream := newWrapServerStream(ss)
 			wrappedStream.WrappedContext = ctx
 
 			return handler(srv, wrappedStream)
@@ -326,8 +338,36 @@ func (h httpRequestAdapter) GetPath() string {
 	return chi.RouteContext(h.request.Context()).RoutePattern()
 }
 
+// GetBody returns the body of the request.
 func (h httpRequestAdapter) GetMethod() string {
 	return h.request.Method
+}
+
+// GetBody returns the body of the request.
+func (h httpRequestAdapter) GetBody() ([]byte, error) {
+	body, err := io.ReadAll(h.request.Body)
+	if err != nil {
+		return nil, err
+	}
+	defer h.request.Body.Close()
+
+	return body, nil
+}
+
+// GetURLParams returns the URL parameters of the request.
+func (h httpRequestAdapter) GetURLParams() map[string]string {
+	params := chi.RouteContext(h.request.Context()).URLParams
+	urlParams := make(map[string]string, len(params.Keys))
+	for i := range params.Keys {
+		urlParams[params.Keys[i]] = params.Values[i]
+	}
+
+	return urlParams
+}
+
+// GetQueryParams returns the query parameters of the request.
+func (h httpRequestAdapter) GetQueryParams() map[string][]string {
+	return h.request.URL.Query()
 }
 
 // GetHeader returns the value of the header with the given key.
@@ -388,8 +428,39 @@ func (g grpcRequestAdapter) GetPath() string {
 	return g.fullMethod
 }
 
+// GetMethod returns the method of the request.
 func (g grpcRequestAdapter) GetMethod() string {
 	return ""
+}
+
+// GetBody returns the body of the payload.
+func (g grpcRequestAdapter) GetBody() ([]byte, error) {
+	// Obtains the payload from the unary request
+	unaryReq := g.ctx.Value(unaryRequestKey)
+	if unaryReq != nil {
+		payload, err := proto.Marshal(unaryReq.(proto.Message))
+		if err != nil {
+			return nil, err
+		}
+		return payload, nil
+	}
+
+	// Obtains the payload from the stream request
+	if ws, ok := g.ctx.Value(streamRequestKey).(*wrappedServerStream); ok && ws.payload != nil {
+		return ws.payload, nil
+	}
+
+	return nil, nil
+}
+
+// GetURLParams returns the URL parameters of the request.
+func (g grpcRequestAdapter) GetURLParams() map[string]string {
+	return nil
+}
+
+// GetQueryParams returns the query parameters of the request.
+func (g grpcRequestAdapter) GetQueryParams() map[string][]string {
+	return nil
 }
 
 // GetHeader returns the value of the header with the given key.
@@ -454,6 +525,8 @@ func (g *grpcRequestAdapter) RemoveAuthorization() {
 type wrappedServerStream struct {
 	grpc.ServerStream
 	WrappedContext context.Context
+	payload        []byte
+	captured       bool
 }
 
 // newWrapServerStream creates a new instance of the wrappedServerStream.
@@ -467,4 +540,22 @@ func newWrapServerStream(stream grpc.ServerStream) *wrappedServerStream {
 // Context returns the modified context.
 func (w *wrappedServerStream) Context() context.Context {
 	return w.WrappedContext
+}
+
+// RecvMsg captures the payload from the stream.
+func (w *wrappedServerStream) RecvMsg(m interface{}) error {
+	err := w.ServerStream.RecvMsg(m)
+	if err != nil {
+		return err
+	}
+
+	// Only captures the payload once
+	if !w.captured {
+		if msg, ok := m.(proto.Message); ok {
+			w.payload, _ = proto.Marshal(msg)
+			w.captured = true
+		}
+	}
+
+	return nil
 }
