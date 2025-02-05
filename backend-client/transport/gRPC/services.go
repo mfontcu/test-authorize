@@ -52,7 +52,7 @@ func (s *ClientServer) Setup() *grpc.Server {
 		"backend-client",    // Name of the service
 	}
 
-	allowedOriginWithoutAuthorizeMidd := authorize.NewAllowedOriginWithoutAuthorizeMiddleware(allowedSources)
+	allowedOriginWithoutAuthorizeMidd := authorize.NewAllowedOriginWithoutAuthorize(allowedSources)
 
 	// Roles
 	allowedRoles := []transportx.AllowedRoles{

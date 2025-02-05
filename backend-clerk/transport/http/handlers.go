@@ -47,7 +47,7 @@ func (h ClerkHandler) Setup(mux *chi.Mux) {
 		"backend-clerk",     // Name of the service
 	}
 
-	allowedOriginWithoutAuthorizeMidd := authorize.NewAllowedOriginWithoutAuthorizeMiddleware(allowedSources)
+	allowedOriginWithoutAuthorizeMidd := authorize.NewAllowedOriginWithoutAuthorize(allowedSources)
 
 	// Roles
 	allowedRoles := []transportx.AllowedRoles{

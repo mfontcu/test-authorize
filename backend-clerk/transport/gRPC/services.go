@@ -53,7 +53,7 @@ func (s *ClerkServer) Setup() *grpc.Server {
 		"backend-clerk",     // Name of the service
 	}
 
-	allowedOriginWithoutAuthorizeMidd := authorize.NewAllowedOriginWithoutAuthorizeMiddleware(allowedSources)
+	allowedOriginWithoutAuthorizeMidd := authorize.NewAllowedOriginWithoutAuthorize(allowedSources)
 
 	// Roles
 	allowedRoles := []transportx.AllowedRoles{

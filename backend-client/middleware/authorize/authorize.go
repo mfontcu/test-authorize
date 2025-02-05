@@ -203,12 +203,7 @@ func (a *authorize) extractClaims(tokenString string) (jwt.MapClaims, error) {
 		return nil, fmt.Errorf("error parsing token: %w", err)
 	}
 
-	// Extract the claims
-	if claims, ok := token.Claims.(jwt.MapClaims); ok {
-		return claims, nil
-	}
-
-	return nil, errors.New("unknown error extracting claims")
+	return token.Claims.(jwt.MapClaims), nil
 }
 
 // validate applies the request validators and adds the claims to the context.
@@ -224,20 +219,20 @@ func (a *authorize) validate(adapter RequestAdapter, claims jwt.MapClaims) (cont
 	return ctx, nil
 }
 
-// allowedOriginWithoutAuthorizeMiddleware define the middleware for handling origin validation and skipping authorization.
-type allowedOriginWithoutAuthorizeMiddleware struct {
+// allowedOriginWithoutAuthorize define the  for handling origin validation and skipping authorization.
+type allowedOriginWithoutAuthorize struct {
 	allowedSources []string
 }
 
-// NewAllowedOriginWithoutAuthorizeMiddleware creates a new instance of the allowedOriginWithoutAuthorizeMiddleware middleware.
-func NewAllowedOriginWithoutAuthorizeMiddleware(allowedSources []string) *allowedOriginWithoutAuthorizeMiddleware {
-	return &allowedOriginWithoutAuthorizeMiddleware{
+// NewAllowedOriginWithoutAuthorize creates a new instance of the allowedOriginWithoutAuthorize.
+func NewAllowedOriginWithoutAuthorize(allowedSources []string) *allowedOriginWithoutAuthorize {
+	return &allowedOriginWithoutAuthorize{
 		allowedSources,
 	}
 }
 
 // HTTPMiddleware applies origin validation and skips authorization in HTTP requests if the origin is valid.
-func (a *allowedOriginWithoutAuthorizeMiddleware) HTTPMiddleware(next http.Handler) http.Handler {
+func (a *allowedOriginWithoutAuthorize) HTTPMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		adapter := newHTTPRequestAdapter(r)
 
@@ -250,7 +245,7 @@ func (a *allowedOriginWithoutAuthorizeMiddleware) HTTPMiddleware(next http.Handl
 }
 
 // GRPCInterceptor applies origin validation and skips authorization in gRPC requests if the origin is valid.
-func (a *allowedOriginWithoutAuthorizeMiddleware) GRPCInterceptor() grpc.UnaryServerInterceptor {
+func (a *allowedOriginWithoutAuthorize) GRPCInterceptor() grpc.UnaryServerInterceptor {
 	return func(
 		ctx context.Context,
 		req interface{},
@@ -269,7 +264,7 @@ func (a *allowedOriginWithoutAuthorizeMiddleware) GRPCInterceptor() grpc.UnarySe
 }
 
 // GRPCStreamInterceptor applies origin validation and skips authorization in gRPC streaming services if the origin is valid.
-func (a *allowedOriginWithoutAuthorizeMiddleware) GRPCStreamInterceptor() grpc.StreamServerInterceptor {
+func (a *allowedOriginWithoutAuthorize) GRPCStreamInterceptor() grpc.StreamServerInterceptor {
 	return func(
 		srv interface{},
 		ss grpc.ServerStream,
@@ -293,7 +288,7 @@ func (a *allowedOriginWithoutAuthorizeMiddleware) GRPCStreamInterceptor() grpc.S
 }
 
 // validateRequest validates if the request comes from an allowed source.
-func (a *allowedOriginWithoutAuthorizeMiddleware) validateRequest(adapter RequestAdapter) bool {
+func (a *allowedOriginWithoutAuthorize) validateRequest(adapter RequestAdapter) bool {
 	reqRemoteAddr := adapter.GetRemoteAddr()
 	hostAddr, _, err := net.SplitHostPort(reqRemoteAddr)
 	if err != nil {
@@ -549,12 +544,15 @@ func (w *wrappedServerStream) RecvMsg(m interface{}) error {
 		return err
 	}
 
-	// Only captures the payload once
-	if !w.captured {
-		if msg, ok := m.(proto.Message); ok {
-			w.payload, _ = proto.Marshal(msg)
-			w.captured = true
-		}
+	// Capture the payload
+	if w.captured {
+		return nil
+	}
+
+	// Marshal the message
+	if msg, ok := m.(proto.Message); ok {
+		w.payload, _ = proto.Marshal(msg)
+		w.captured = true
 	}
 
 	return nil

@@ -47,7 +47,7 @@ func (h AdminHandler) Setup(mux *chi.Mux) {
 		"backend-admin",     // Name of the service
 	}
 
-	allowedOriginWithoutAuthorizeMidd := authorize.NewAllowedOriginWithoutAuthorizeMiddleware(allowedSources)
+	allowedOriginWithoutAuthorizeMidd := authorize.NewAllowedOriginWithoutAuthorize(allowedSources)
 
 	// Roles
 	allowedRoles := []transportx.AllowedRoles{

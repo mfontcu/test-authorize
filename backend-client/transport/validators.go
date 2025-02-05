@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net"
 	"slices"
 	"strings"
 
@@ -133,40 +132,4 @@ func (v *storeIDsValidator) Execute(adapter authorize.RequestAdapter, claims jwt
 
 func (v storeIDsValidator) AddToContext(ctx context.Context) context.Context {
 	return context.WithValue(ctx, StoreIDsKey, v.claimStoreIDs)
-}
-
-// allowedOriginValidator validate if the request comes from an allowed source.
-type allowedOriginValidator struct {
-	allowedSources []string // List of allowed sources. (e.g., "localhost", "svc.cluster.local", name of Docker services)
-}
-
-// NewAllowedOriginValidator creates a new instance of allowedOriginValidator.
-func NewAllowedOriginValidator(allowedSources []string) *allowedOriginValidator {
-	return &allowedOriginValidator{
-		allowedSources,
-	}
-}
-
-// Validate if the request comes from an allowed source.
-func (v *allowedOriginValidator) Execute(adapter authorize.RequestAdapter) error {
-	reqRemoteAddr := adapter.GetRemoteAddr()
-	hostAddr, _, err := net.SplitHostPort(reqRemoteAddr)
-	if err != nil {
-		hostAddr = reqRemoteAddr // If it fails, use the host address directly
-	}
-
-	reqHost := adapter.GetHost()
-	host, _, err := net.SplitHostPort(reqHost)
-	if err != nil {
-		host = reqHost // If it fails, use the host directly
-	}
-
-	// Validate if the request comes from an allowed source.
-	for _, source := range v.allowedSources {
-		if strings.HasSuffix(hostAddr, source) || hostAddr == source || strings.HasSuffix(host, source) || host == source {
-			return nil // It is allowed
-		}
-	}
-
-	return errors.New("request is not allowed")
 }
